@@ -1,0 +1,64 @@
+name: Auto Implementation
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  auto-impl:
+    if: github.event.label.name == 'auto-impl'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Gemini CLI 설치
+        run: npm install -g @google/gemini-cli
+
+      - name: 라벨 전이 (auto-impl → analyzing)
+        run: |
+          gh issue edit ${{ github.event.issue.number }} \
+            --remove-label "auto-impl" --add-label "analyzing"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: run_flow.py 실행
+        run: |
+          curl -sO https://raw.githubusercontent.com/mpls/prompt-flow-runner/main/run_flow.py
+          python3 run_flow.py \
+            --repo ${{ github.repository }} \
+            --issue ${{ github.event.issue.number }} \
+            --repo-dir .
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 성공 시 라벨 (analyzing → pr-created)
+        if: success()
+        run: |
+          gh issue edit ${{ github.event.issue.number }} \
+            --remove-label "analyzing" --add-label "pr-created"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 실패 시 라벨 (analyzing → needs-human)
+        if: failure()
+        run: |
+          gh issue edit ${{ github.event.issue.number }} \
+            --remove-label "analyzing" --add-label "needs-human"
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "자동 구현 실패. 로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
